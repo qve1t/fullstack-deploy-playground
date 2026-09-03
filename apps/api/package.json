@@ -8,11 +8,13 @@
 		"node": ">=26"
 	},
 	"scripts": {
-		"dev": "tsx watch --env-file-if-exists=.env src/main.ts",
+		"db:generate": "prisma generate",
+		"db:migrate": "prisma migrate dev",
+		"dev": "prisma generate && tsx watch --env-file-if-exists=.env src/main.ts",
 		"lint": "biome check",
 		"lint:fix": "biome check --fix",
 		"typecheck": "tsc --noEmit",
-		"build": "tsc",
+		"build": "prisma generate && tsc",
 		"start": "node dist/main.js"
 	},
 	"devDependencies": {
