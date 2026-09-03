@@ -8,20 +8,27 @@
 		"node": ">=26"
 	},
 	"scripts": {
-		"dev": "tsx watch --env-file-if-exists=.env src/main.ts",
+		"db:generate": "prisma generate",
+		"db:migrate": "prisma migrate dev",
+		"dev": "prisma generate && tsx watch --env-file-if-exists=.env src/main.ts",
 		"lint": "biome check",
 		"lint:fix": "biome check --fix",
 		"typecheck": "tsc --noEmit",
-		"build": "tsc",
+		"build": "prisma generate && tsc",
 		"start": "node dist/main.js"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.11",
 		"@types/node": "^26.4.0",
+		"@types/pg": "^8.23.1",
+		"prisma": "7.10.0",
 		"tsx": "^4.23.13",
 		"typescript": "^7.0.2"
 	},
 	"dependencies": {
-		"fastify": "^5.12.1"
+		"@prisma/adapter-pg": "^7.10.0",
+		"@prisma/client": "7.10.0",
+		"fastify": "^5.12.1",
+		"pg": "^8.23.0"
 	}
 }
