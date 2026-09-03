@@ -1,5 +1,6 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../generated/prisma/client.js";
+import { env } from "./env.js";
 
 interface DbClient<TClient> {
 	connect: () => Promise<unknown>;
@@ -12,11 +13,7 @@ class PrismaDb implements DbClient<PrismaClient> {
 	private client: PrismaClient;
 
 	constructor() {
-		const connectionString = process.env.DATABASE_URL;
-
-		if (!connectionString) {
-			throw new Error("DATABASE_URL is not defined");
-		}
+		const connectionString = env.databaseUrl;
 
 		const adapter = new PrismaPg({
 			connectionString,
