@@ -14,8 +14,7 @@ RUN pnpm run build
 FROM build AS migrate
 CMD ["pnpm", "run", "db:deploy"]
 
-
-FROM pnpm-base  AS prod-deps
+FROM pnpm-base AS prod-deps
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 RUN pnpm fetch --prod && pnpm install --prod --frozen-lockfile --offline
 
