@@ -10,6 +10,7 @@
 	"scripts": {
 		"db:generate": "prisma generate",
 		"db:migrate": "prisma migrate dev",
+		"db:deploy": "prisma migrate deploy",
 		"dev": "prisma generate && tsx watch --env-file-if-exists=.env src/main.ts",
 		"lint": "biome check",
 		"lint:fix": "biome check --fix",
