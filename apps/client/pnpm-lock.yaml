@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@picocss/pico':
+        specifier: ^2.1.1
+        version: 2.1.1
       react:
         specifier: ^19.2.8
         version: 19.2.8
@@ -98,6 +101,9 @@ packages:
 
   '@oxc-project/types@0.148.0':
     resolution: {integrity: sha512-Nm4s/jB+4FpFsPhWGEC4h7rzksesmtnMXomo6rCMcg/b8zLQuOziRgkCS1fxDCXOlJB/6Q8oABOZ/OP6RIPj9A==}
+
+  '@picocss/pico@2.1.1':
+    resolution: {integrity: sha512-kIDugA7Ps4U+2BHxiNHmvgPIQDWPDU4IeU6TNRdvXQM1uZX+FibqDQT2xUOnnO2yq/LUHcwnGlu1hvf4KfXnMg==}
 
   '@rolldown/binding-android-arm-eabi@1.2.7':
     resolution: {integrity: sha512-EypzgnYCwyVY4NDHKzGmNJT5b+XaQEBniHxsMdeIQLB/tcCzZnhqrzHpZFbX9iaxx+5RiB8caATBtfvZP7zVxQ==}
@@ -450,6 +456,8 @@ snapshots:
     optional: true
 
   '@oxc-project/types@0.148.0': {}
+
+  '@picocss/pico@2.1.1': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.7':
     optional: true

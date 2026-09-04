@@ -1,28 +1,33 @@
-# React + TypeScript + Vite
+# Notes client
 
-This template provides a minimal setup to get React working in Vite with HMR and Biome for linting and formatting.
+React client for the users and notes API. Styling is provided by Pico CSS.
 
-Currently, two official plugins are available:
+## Run locally
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Start the API on port `3000`, then run:
 
-## React Compiler
+```sh
+pnpm install
+pnpm dev
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+During development, Vite proxies `/api` requests to `http://localhost:3000`.
+Set `VITE_API_URL` to use a different API base URL.
 
-## Code quality
+## Structure
 
-Run all Biome checks:
+- `src/api.ts` — API types and requests
+- `src/UserPage.tsx` — user selection and creation
+- `src/NotePage.tsx` — notes CRUD
+- `src/components` — presentational forms, lists and note cards
+- `src/App.tsx` — switches between both views
+- `src/main.tsx` — application entry point
+
+## Quality checks
 
 ```sh
 pnpm lint
+pnpm build
 ```
 
-Apply safe fixes and formatting:
-
-```sh
-pnpm lint:fix
-```
-
-The rules and formatting preferences are defined in [`biome.json`](./biome.json).
+Apply safe Biome fixes and formatting with `pnpm lint:fix`.
