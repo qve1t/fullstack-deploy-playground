@@ -1,7 +1,9 @@
 import Fastify, {
+	type FastifyError,
 	type FastifyInstance,
 	type FastifyPluginAsync,
 } from "fastify";
+import { ConflictError, NotFoundError } from "./applicationErrors.js";
 
 interface WebServerOptions {
 	port: number;
@@ -13,7 +15,27 @@ class WebServer {
 
 	constructor() {
 		this.server = Fastify({ logger: false });
+		this.registerErrorHandler();
 		this.registerRoute(this.createHealthCheckRoute());
+	}
+
+	private registerErrorHandler() {
+		this.server.setErrorHandler((error: FastifyError, _request, reply) => {
+			if (error instanceof NotFoundError) {
+				return reply.code(404).send({ message: error.message });
+			}
+
+			if (error instanceof ConflictError) {
+				return reply.code(409).send({ message: error.message });
+			}
+
+			if (error.validation) {
+				return reply.code(400).send({ message: error.message });
+			}
+
+			console.error(error);
+			return reply.code(500).send({ message: "Internal server error" });
+		});
 	}
 
 	private createHealthCheckRoute(): FastifyPluginAsync {
