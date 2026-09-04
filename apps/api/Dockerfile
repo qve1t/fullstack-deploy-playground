@@ -11,6 +11,10 @@ COPY . /app/
 RUN pnpm install --frozen-lockfile --offline
 RUN pnpm run build
 
+FROM build AS migrate
+CMD ["pnpm", "run", "db:deploy"]
+
+
 FROM pnpm-base  AS prod-deps
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 RUN pnpm fetch --prod && pnpm install --prod --frozen-lockfile --offline
