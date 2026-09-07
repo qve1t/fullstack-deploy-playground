@@ -170,10 +170,3 @@ It also means the page and the API share an origin, so there is no CORS setup at
 
 The API listens on port 3000 inside the Compose network and has no host port. Postgres has
 one, but only so that local development can reach it.
-
-## Next
-
-Continuous delivery — on merge to `main`, build a Docker image tagged with the commit
-SHA, push it to GitHub Container Registry, and deploy it without a manual step. Tagging
-by SHA rather than `latest` is what makes it possible to say exactly which commit is
-running in production, and to go back to a specific one.
