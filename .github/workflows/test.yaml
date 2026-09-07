@@ -19,6 +19,7 @@ jobs:
 
       - run: npm i -g pnpm@11.13.0
       - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
