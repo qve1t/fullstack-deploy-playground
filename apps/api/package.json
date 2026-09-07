@@ -15,6 +15,7 @@
 		"lint": "biome check",
 		"lint:fix": "biome check --fix",
 		"typecheck": "tsc --noEmit",
+		"test": "tsx --test 'src/**/*.test.ts'",
 		"build": "prisma generate && tsc",
 		"start": "node dist/main.js"
 	},
