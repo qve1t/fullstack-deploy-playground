@@ -77,6 +77,14 @@ Natively the API reaches Postgres at `localhost:5432` through the published port
 Compose it uses the `postgres` service name, which Docker's embedded DNS resolves on the
 project network.
 
+## Tests
+
+Each app has four small tests that run without PostgreSQL, Docker or a running API.
+The API uses Node's test runner with the existing `tsx` dependency and Fastify's
+`inject` to check health, user creation, validation and a missing user. The client
+uses Vitest with a mocked `fetch` to check URL encoding, note creation, API errors
+and empty responses after deletion.
+
 ## Decisions
 
 ### The apps are separate projects, not a pnpm workspace
@@ -126,5 +134,5 @@ one, but only so that local development can reach it.
 
 ## Next
 
-Continuous integration — lint, typecheck and build as required checks on every pull
-request, with tests added alongside them.
+Continuous integration — lint, typecheck, test and build as required checks on every
+pull request.
