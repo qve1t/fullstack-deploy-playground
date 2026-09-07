@@ -1,0 +1,42 @@
+name: Test workflow
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test-api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - run: npm i -g pnpm@11.13.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+  test-client:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/client
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - run: npm i -g pnpm@11.13.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
