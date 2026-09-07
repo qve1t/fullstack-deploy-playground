@@ -6,6 +6,28 @@ on:
       - main
 
 jobs:
+  check-node-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Node version in .nvmrc matches every Dockerfile
+        run: |
+          expected="$(tr -d '[:space:]' < .nvmrc)"
+          status=0
+
+          for dockerfile in apps/api/Dockerfile apps/client/Dockerfile; do
+            found="$(sed -n 's/^FROM node:\([^ -]*\).*/\1/p' "$dockerfile" | sort -u)"
+
+            if [ "$found" != "$expected" ]; then
+              echo "::error file=$dockerfile::.nvmrc says node $expected, this file says '$found'"
+              status=1
+            fi
+          done
+
+          [ $status -eq 0 ] && echo "Node $expected matches every Dockerfile."
+          exit $status
+
   test-api:
     runs-on: ubuntu-latest
     defaults:
