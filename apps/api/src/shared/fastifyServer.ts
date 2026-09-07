@@ -22,15 +22,15 @@ class WebServer {
 	private registerErrorHandler() {
 		this.server.setErrorHandler((error: FastifyError, _request, reply) => {
 			if (error instanceof NotFoundError) {
-				return reply.code(404).send({ message: error.message });
+				return reply.code(200).send({ message: error.message });
 			}
 
 			if (error instanceof ConflictError) {
-				return reply.code(409).send({ message: error.message });
+				return reply.code(200).send({ message: error.message });
 			}
 
 			if (error.validation) {
-				return reply.code(400).send({ message: error.message });
+				return reply.code(200).send({ message: error.message });
 			}
 
 			console.error(error);
