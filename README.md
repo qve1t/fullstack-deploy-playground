@@ -48,7 +48,8 @@ pointed at an unmigrated database.
 | Package manager | pnpm 11                                                    |
 | Lint / format   | Biome                                                      |
 | Base images     | `node:26.5.0-alpine`, `nginx:1.31.5-alpine`               |
-| CI/CD           | not built yet                                              |
+| CI              | GitHub Actions, required checks on every pull request      |
+| CD              | not built yet                                              |
 
 ## Running the whole thing
 
@@ -85,6 +86,43 @@ The API uses Node's test runner with the existing `tsx` dependency and Fastify's
 uses Vitest with a mocked `fetch` to check URL encoding, note creation, API errors
 and empty responses after deletion.
 
+## Continuous integration
+
+Every pull request against `main` runs `.github/workflows/test.yaml`. `main` is a
+protected branch and those checks are required, so a red pipeline disables the merge
+button.
+
+Three jobs run in parallel:
+
+| Job                  | What it does                                             |
+| -------------------- | -------------------------------------------------------- |
+| `check-node-version` | Compares `.nvmrc` with the `FROM node:` lines             |
+| `test-api`           | lint → typecheck → test → build, inside `apps/api`        |
+| `test-client`        | lint → typecheck → test → build, inside `apps/client`     |
+
+Each app gets its own job, so a red pipeline says which app broke.
+
+Inside a job the cheap steps run first. Lint and typecheck finish in seconds and the
+build takes longest, so a broken type never reaches a build. The first failing step
+ends the job and everything after it is skipped.
+
+`test-api` runs `pnpm db:generate` before the other steps. The Prisma client is
+generated code and is not committed, so a fresh checkout does not have it yet. Every
+developer machine has it lying around from an earlier `pnpm dev`, which is exactly why
+it is easy to forget: the typecheck passes locally and fails in CI.
+
+### Proving the gate works
+
+A gate that has never failed is not a gate — it might be passing because it checks
+nothing. So it was tested from the other side.
+
+A pull request changed the API error handler to answer `200` where it used to answer
+`404`, `409` and `400`. The code still compiled, and lint and typecheck stayed green.
+The tests caught it, the build was skipped, and GitHub blocked the merge.
+
+That order matters more than the fix. A type error would only have proved that the
+compiler runs. Breaking the behaviour proved that the tests are actually load-bearing.
+
 ## Decisions
 
 ### The apps are separate projects, not a pnpm workspace
@@ -103,7 +141,8 @@ describes the development environment, not one app.
 Three tools need that version and none of them share config: nvm, GitHub Actions and
 Docker. The rule is **derive it where a tool can read the file, verify it where a tool
 cannot.** `actions/setup-node` reads `.nvmrc` directly. A Dockerfile cannot read a file
-before `FROM`, so it repeats the version, and CI checks that the two still match.
+before `FROM`, so it has to repeat the version — and the `check-node-version` job fails
+the build if the copy ever drifts from the original.
 
 ### Migrations run as their own job, never at app startup
 
@@ -134,5 +173,7 @@ one, but only so that local development can reach it.
 
 ## Next
 
-Continuous integration — lint, typecheck, test and build as required checks on every
-pull request.
+Continuous delivery — on merge to `main`, build a Docker image tagged with the commit
+SHA, push it to GitHub Container Registry, and deploy it without a manual step. Tagging
+by SHA rather than `latest` is what makes it possible to say exactly which commit is
+running in production, and to go back to a specific one.
