@@ -31,7 +31,8 @@ jobs:
           context: ./apps/${{ matrix.app }}
           target: prod
           push: true
+          tags: |
             ghcr.io/${{ github.repository }}-${{ matrix.app }}:${{ github.sha }}
-            ghcr.io/${{ github.repository }}-${{ matrix.app }}:latest
+            ghcr.io/${{ github.repository }}-${{ matrix.app }}:main
           cache-from: type=gha
           cache-to: type=gha,mode=max
