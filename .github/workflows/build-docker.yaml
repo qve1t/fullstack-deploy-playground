@@ -6,11 +6,15 @@ on:
       - main
 
 jobs:
-  build-api:
+  builds:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    strategy:
+        matrix:
+          app: [api, client]
+        fail-fast: false
     steps:
       - uses: actions/checkout@v7
 
@@ -24,9 +28,9 @@ jobs:
 
       - uses: docker/build-push-action@v7
         with:
-          context: ./apps/api
+          context: ./apps/${{ matrix.app }}
           target: prod
           push: true
-          tags: ghcr.io/${{ github.repository }}-api:${{ github.sha }}
+          tags: ghcr.io/${{ github.repository }}-${{ matrix.app }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
