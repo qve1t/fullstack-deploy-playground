@@ -27,12 +27,22 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: docker/build-push-action@v7
+
         with:
           context: ./apps/${{ matrix.app }}
           target: prod
+          build-args: GIT_SHA=${{ github.sha }}
           push: true
           tags: |
             ghcr.io/${{ github.repository }}-${{ matrix.app }}:${{ github.sha }}
             ghcr.io/${{ github.repository }}-${{ matrix.app }}:main
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy-api:
+    needs: builds
+    runs-on: ubuntu-latest
+    steps:
+      - run: npx -y @railway/cli@latest redeploy --service api --yes
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
