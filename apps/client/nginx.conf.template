@@ -5,11 +5,15 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    resolver ${DNS_RESOLVER} ipv6=on valid=10s;
+
     location / {
         try_files $uri $uri/ /index.html;
     }
 
     location /api/ {
-        proxy_pass http://api:3000/;
+        set $upstream ${API_UPSTREAM};
+        rewrite ^/api/(.*)$ /$1 break;
+        proxy_pass $upstream;
     }
 }

@@ -39,10 +39,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy-api:
+  deploys:
     needs: builds
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [api, client]
     steps:
-      - run: npx -y @railway/cli@latest redeploy --service api --yes
+      - run: npx -y @railway/cli@latest redeploy --service ${{ matrix.app }} --yes
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}

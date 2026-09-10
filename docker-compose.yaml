@@ -51,6 +51,9 @@ services:
       target: prod
     ports:
       - "8000:80"
+    environment:
+      DNS_RESOLVER: 127.0.0.11          # wbudowany DNS Dockera
+      API_UPSTREAM: http://api:3000
     healthcheck:
       test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1/health"]
       interval: 30s
