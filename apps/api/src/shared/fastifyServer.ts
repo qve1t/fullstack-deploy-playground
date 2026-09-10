@@ -4,6 +4,7 @@ import Fastify, {
 	type FastifyPluginAsync,
 } from "fastify";
 import { ConflictError, NotFoundError } from "./applicationErrors.js";
+import { env } from "./env.js";
 
 interface WebServerOptions {
 	port: number;
@@ -41,7 +42,11 @@ class WebServer {
 	private createHealthCheckRoute(): FastifyPluginAsync {
 		return async (app) => {
 			app.get("/health", async () => {
-				return { status: "ok", dateTime: new Date().toISOString() };
+				return {
+					status: "ok",
+					dateTime: new Date().toISOString(),
+					gitSha: env.gitSha,
+				};
 			});
 		};
 	}

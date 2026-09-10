@@ -19,10 +19,12 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 RUN pnpm fetch --prod && pnpm install --prod --frozen-lockfile --offline
 
 FROM base AS prod
+ARG GIT_SHA
 COPY --from=prod-deps /app/node_modules /app/node_modules
 COPY --from=build /app/dist /app/dist
 USER node
 ENV PORT=3000
 ENV HOST=0.0.0.0
+ENV GIT_SHA=$GIT_SHA
 EXPOSE 3000
 CMD ["node", "dist/main.js"]
