@@ -58,11 +58,16 @@ public URL. The API is private.
 │  SPA + proxy │  network  │  no public   │network │  public TCP  │
 └──────────────┘           └──────────────┘        └──────▲───────┘
                                                           │
-                                                    migrate by hand
+                                                   ┌──────┴───────┐
+                                                   │  db-migrate  │
+                                                   │  from CI     │
+                                                   └──────────────┘
 ```
 
-There is no `migrate` service here yet. The schema is applied by hand, through
-the database's public endpoint. That is a known shortcut, and closing it is the next step.
+There is no `migrate` service here. The schema is applied by the `db-migrate` job in the
+deployment pipeline, from a GitHub runner, reaching Postgres through its public TCP
+endpoint. Keeping that endpoint open is what this choice costs, and the reasoning for
+taking it anyway is written down under *Decisions*.
 
 ## Stack
 
@@ -159,21 +164,52 @@ happens through a pull request, because `main` is protected and the CI checks ar
 ```
 merge to main
      │
-     ├─▶  builds     matrix: api, client
-     │               docker build → push to ghcr.io
-     │               tagged twice:  :<commit sha>  and  :main
-     │
-     └─▶  deploys    matrix: api, client          (needs: builds)
-                     railway redeploy → pulls :main
+     ▼
+  builds        matrix: api, client
+     │          docker build → push to ghcr.io
+     │          tagged twice:  :<commit sha>  and  :main
+     ▼
+  db-migrate    prisma migrate deploy      (needs: builds)
+     │          one job, never a matrix
+     ▼
+  deploys       matrix: api, client        (needs: builds, db-migrate)
+                railway redeploy → pulls :main
 ```
 
 Nothing is rebuilt along the way. The image that gets deployed is the image that was built
 once, from that commit - *build once, promote*.
 
-`deploys` declares `needs: builds`. Without that line both jobs would start at the same
-time, the redeploy would usually win the race, and Railway would pull the **previous**
-image. The pipeline would be green and production would be stale. That is the worst kind of
-failure, because nothing looks broken.
+`deploys` declares `needs: [builds, db-migrate]`. Without that, the jobs would all start at
+the same time, the redeploy would usually win the race, and Railway would pull the
+**previous** image. The pipeline would be green and production would be stale. That is the
+worst kind of failure, because nothing looks broken.
+
+### The migration runs between the build and the deploy
+
+`db-migrate` runs `prisma migrate deploy` once. It is a single job and never a matrix: two
+runners applying the same migrations to the same database at the same time is the failure
+this shape avoids.
+
+Its position in the chain is deliberate in both directions.
+
+It runs **after** `builds`, so a failed image build never touches the production database.
+Nothing is migrated for an artifact that does not exist.
+
+It runs **before** `deploys`, which means that for the couple of minutes between the two
+jobs, the old code is talking to the new schema. That window is not an accident. It is the
+reason every migration has to be backward compatible with the version already running — a
+change that only the new code can survive would break the site before the new code ever
+ships. The pipeline makes that rule structural instead of something to remember.
+
+If the migration fails, `deploys` is skipped. The images sit in ghcr.io, production keeps
+serving the old code, and nothing ends up half-deployed.
+
+The Prisma CLI version comes out of the lockfile: the job runs `pnpm install
+--frozen-lockfile` and then `pnpm db:deploy`, the same script the Compose `migrate` service
+runs. `npx prisma` would instead have downloaded whatever was newest on npm that morning
+and pointed it at the production database. Prisma scopes its config filename to the major
+version (`prisma7.config.ts`), so a silent jump to 8 would not even find the datasource
+URL.
 
 ### Knowing what is running
 
@@ -187,10 +223,11 @@ curl https://<api-url>/health
 
 ### Secrets
 
-| Secret          | Used for | Scope                                        |
-| --------------- | -------- | -------------------------------------------- |
-| `GITHUB_TOKEN`  | ghcr.io  | Created by GitHub, lives for one run          |
-| `RAILWAY_TOKEN` | Railway  | Project token — one project, one environment  |
+| Secret          | Used for | Scope                                             |
+| --------------- | -------- | ------------------------------------------------- |
+| `GITHUB_TOKEN`  | ghcr.io  | Created by GitHub, lives for one run              |
+| `RAILWAY_TOKEN` | Railway  | Project token — one project, one environment      |
+| `DATABASE_URL`  | Postgres | Connection string for the production database     |
 
 `GITHUB_TOKEN` is not stored anywhere. GitHub creates it for each run, and the workflow asks
 for the one permission it actually needs:
@@ -204,6 +241,12 @@ permissions:
 `RAILWAY_TOKEN` is a real stored secret, because Railway knows nothing about this
 repository. It is a project token and not an account token, so if it leaked it would reach
 one environment instead of everything on the account.
+
+`DATABASE_URL` is the one worth worrying about. The other two are scoped API tokens; this
+one is direct write access to production data. It reaches the job through the step's `env:`
+block rather than being written inline into the `run:` line, because `${{ }}` is substituted
+into the script text before any shell sees it — an inline secret becomes part of the command
+line itself.
 
 ## Decisions
 
@@ -228,14 +271,31 @@ the build if the copy ever drifts from the original.
 
 ### Migrations run as their own job, never at app startup
 
-The `migrate` service runs once and must finish before the API starts.
+Locally the `migrate` Compose service runs once and must finish before the API starts. In
+production the `db-migrate` job does the same thing, one step earlier in the pipeline.
 
 Running migrations on boot would cause two problems. With several replicas, they would all
 migrate at the same time. And a failed migration would restart the app forever instead of
 stopping the deploy.
 
-The same `migrate` build target will later become the release command on the hosting
-platform.
+Both paths run the same `pnpm db:deploy` script on the same pinned Prisma version, so what
+gets exercised on a laptop is what runs against production.
+
+### The pipeline migrates from CI, not from inside the project
+
+The alternative was Railway's per-service pre-deploy command: the same image, run inside the
+project, on the private network, before the new version starts. That route would have let
+Postgres drop its public TCP endpoint entirely.
+
+The CI job won for one reason — it is in the repository. The ordering, the failure
+behaviour and the pinned CLI version are all readable in
+`.github/workflows/build-docker.yaml`. A pre-deploy command is a text field in a dashboard,
+invisible to anyone who clones this repo and invisible in its history.
+
+The cost is real and is not hidden: Postgres keeps a public TCP endpoint so that a GitHub
+runner can reach it, and a production connection string lives in a GitHub secret. For a
+project this size that is an acceptable trade. For a database with real data in it, the
+pre-deploy route is the better answer.
 
 ### The browser only talks to nginx
 
@@ -315,6 +375,7 @@ Production is almost the same. Only the client service has a generated domain, a
 is reachable on the private network only, so the one way in from the internet is through
 nginx.
 
-Postgres is the exception. Railway also gives it a public TCP endpoint, and that is what
-migrations are currently run through from a laptop. It should be switched off once the
-pipeline applies migrations from inside the project.
+Postgres is the exception. Railway also gives it a public TCP endpoint, and the
+`db-migrate` job reaches the database through it. That endpoint stays open on purpose — see
+*The pipeline migrates from CI* above — and it is the one way into an otherwise private
+network that does not go through nginx.
