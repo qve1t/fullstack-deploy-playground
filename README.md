@@ -248,6 +248,58 @@ block rather than being written inline into the `run:` line, because `${{ }}` is
 into the script text before any shell sees it — an inline secret becomes part of the command
 line itself.
 
+## Renaming a column without downtime
+
+`Note.title` became `Note.heading` while the site stayed up. It took six deploys.
+
+The reason it takes six is the pipeline. The migration job runs *before* the new image is
+live, so for a minute or two the **old** code is running against the **new** schema. Every
+step has to be survivable by the version already in production.
+
+| # | Kind      | What it did                                           |
+| - | --------- | ----------------------------------------------------- |
+| 1 | migration | `ADD COLUMN heading TEXT`, nullable                   |
+| 2 | code      | write both columns, read `heading ?? title`           |
+| 3 | migration | backfill: `SET heading = title WHERE heading IS NULL` |
+| 4 | migration | `title DROP NOT NULL`, `heading SET NOT NULL`         |
+| 5 | code      | write and read `heading` only                         |
+| 6 | migration | `DROP COLUMN title`                                   |
+
+The rule underneath it: **never remove or tighten something in the same step that changes
+the code.** Adding a column or loosening a constraint can ride along with a code change.
+Removing one cannot.
+
+### Three steps would have been enough
+
+Six is not the minimum. The same rename fits into three pull requests:
+
+| PR | Contains         | What it does                                             |
+| -- | ---------------- | -------------------------------------------------------- |
+| A  | migration + code | add `heading` nullable, then write both columns           |
+| B  | migration + code | backfill, flip both constraints, then use `heading` only  |
+| C  | migration        | drop `title`                                              |
+
+B works because the migration runs first and the old image is still writing both columns:
+it satisfies the new `heading NOT NULL`, and `title` has just become nullable, so nothing
+it does breaks.
+
+C cannot join B — the drop would land while the old image still writes to that column, and
+that pull request carries no new code to fix it. A cannot join B either, because
+`SET NOT NULL` would run while the version that knows nothing about `heading` is still
+live, and its next insert would fail. Three is a floor, not a preference.
+
+It was done in six because this is a learning project, and each extra step made one thing
+visible: that old code survives a new nullable column, that the read fallback really does
+handle rows that are still empty, that a `NOT NULL` column cannot simply be abandoned.
+Merged together, none of that is observable. On a real project each step costs a review and
+a deploy window, and three would be the right call.
+
+### What was skipped
+
+Step 6 destroys data and no backup was taken first. On a table with real data that is the
+wrong call. The right one is an automated dump on every migration, unconditionally —
+deciding *which* migrations are destructive is the part that goes wrong, not the dump.
+
 ## Decisions
 
 ### The apps are separate projects, not a pnpm workspace
