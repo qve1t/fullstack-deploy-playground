@@ -17,11 +17,16 @@ class PrismaNoteRepository implements NoteRepository {
 	}
 
 	create(input: CreateNoteInput) {
-		return this.prisma.note.create({ data: input });
+		const heading = input.title;
+		return this.prisma.note.create({ data: { ...input, heading } });
 	}
 
 	update(id: string, input: UpdateNoteInput) {
-		return this.prisma.note.update({ where: { id }, data: input });
+		const heading = input.title;
+		return this.prisma.note.update({
+			where: { id },
+			data: { ...input, heading },
+		});
 	}
 
 	async delete(id: string) {
