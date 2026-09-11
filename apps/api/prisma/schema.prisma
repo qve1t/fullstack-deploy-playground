@@ -22,7 +22,6 @@ model User {
 
 model Note {
   id        String   @id @default(uuid()) @db.Uuid
-  title     String?
   heading   String
   content   String?
   userId    String   @db.Uuid
