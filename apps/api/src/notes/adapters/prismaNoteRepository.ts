@@ -9,7 +9,7 @@ class PrismaNoteRepository implements NoteRepository {
 	private toDomain(note: NoteModel): Note {
 		return {
 			id: note.id,
-			title: note.heading ?? note.title,
+			title: note.heading,
 			content: note.content,
 			userId: note.userId,
 			createdAt: note.createdAt,
@@ -32,16 +32,24 @@ class PrismaNoteRepository implements NoteRepository {
 	}
 
 	async create(input: CreateNoteInput) {
-		const heading = input.title;
-		const note = await this.prisma.note.create({ data: { ...input, heading } });
+		const note = await this.prisma.note.create({
+			data: {
+				heading: input.title,
+				content: input.content,
+				userId: input.userId,
+			},
+		});
 		return this.toDomain(note);
 	}
 
 	async update(id: string, input: UpdateNoteInput) {
-		const heading = input.title;
 		const note = await this.prisma.note.update({
 			where: { id },
-			data: { ...input, heading },
+			data: {
+				heading: input.title,
+				content: input.content,
+				userId: input.userId,
+			},
 		});
 		return this.toDomain(note);
 	}
