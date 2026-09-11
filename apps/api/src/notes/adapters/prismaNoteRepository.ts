@@ -7,7 +7,14 @@ class PrismaNoteRepository implements NoteRepository {
 	constructor(private readonly prisma: PrismaClient) {}
 
 	private toDomain(note: NoteModel): Note {
-		return { ...note, title: note.heading ?? note.title };
+		return {
+			id: note.id,
+			title: note.heading ?? note.title,
+			content: note.content,
+			userId: note.userId,
+			createdAt: note.createdAt,
+			updatedAt: note.updatedAt,
+		};
 	}
 
 	async findAll(userId?: string) {
@@ -16,7 +23,7 @@ class PrismaNoteRepository implements NoteRepository {
 				where: userId ? { userId } : undefined,
 				orderBy: { createdAt: "desc" },
 			})
-		).map(this.toDomain);
+		).map((note) => this.toDomain(note));
 	}
 
 	async findById(id: string) {
@@ -24,17 +31,19 @@ class PrismaNoteRepository implements NoteRepository {
 		return note ? this.toDomain(note) : null;
 	}
 
-	create(input: CreateNoteInput) {
+	async create(input: CreateNoteInput) {
 		const heading = input.title;
-		return this.prisma.note.create({ data: { ...input, heading } });
+		const note = await this.prisma.note.create({ data: { ...input, heading } });
+		return this.toDomain(note);
 	}
 
-	update(id: string, input: UpdateNoteInput) {
+	async update(id: string, input: UpdateNoteInput) {
 		const heading = input.title;
-		return this.prisma.note.update({
+		const note = await this.prisma.note.update({
 			where: { id },
 			data: { ...input, heading },
 		});
+		return this.toDomain(note);
 	}
 
 	async delete(id: string) {
