@@ -1,0 +1,53 @@
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "SHA of the commit to rollback to"
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  retag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Both images for this SHA exist
+        run: |
+          for app in api client; do
+            img="ghcr.io/${{ github.repository }}-$app:${{ inputs.sha }}"
+            docker manifest inspect "$img" > /dev/null \
+              || { echo "::error::brak obrazu $img"; exit 1; }
+          done
+
+      - name: Change :main tag to rollback target
+        run: |
+          for app in api client; do
+            repo="ghcr.io/${{ github.repository }}-$app"
+            docker buildx imagetools create -t "$repo:main" "$repo:${{ inputs.sha }}"
+          done
+
+  deploys:
+    needs: retag
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [api, client]
+      fail-fast: false
+    steps:
+      - run: npx -y @railway/cli@5.52.1 redeploy --service ${{ matrix.app }} --yes
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
