@@ -111,11 +111,15 @@ project network.
 
 ## Tests
 
-Each app has four small tests that run without PostgreSQL, Docker or a running API.
+Small tests that run without PostgreSQL, Docker or a running API — six in the API, four
+in the client.
+
 The API uses Node's test runner with the existing `tsx` dependency and Fastify's
-`inject` to check health, user creation, validation and a missing user. The client
-uses Vitest with a mocked `fetch` to check URL encoding, note creation, API errors
-and empty responses after deletion.
+`inject` to check both health endpoints, user creation, validation and a missing user.
+The client uses Vitest with a mocked `fetch` to check URL encoding, note creation, API
+errors and empty responses after deletion.
+
+What this shape of test cannot catch is written up under *Green tests, broken endpoint*.
 
 ## Continuous integration
 
@@ -300,6 +304,81 @@ Step 6 destroys data and no backup was taken first. On a table with real data th
 wrong call. The right one is an automated dump on every migration, unconditionally —
 deciding *which* migrations are destructive is the part that goes wrong, not the dump.
 
+## Health checks
+
+Two endpoints, answering two different questions.
+
+| Endpoint        | Question               | Who asks                                 |
+| --------------- | ---------------------- | ---------------------------------------- |
+| `/health/live`  | Is the process alive?  | Compose, the platform's restart logic    |
+| `/health/ready` | Can it serve traffic?  | anything deciding where to route         |
+
+`/health/live` answers immediately and touches nothing else. `/health/ready` runs
+`SELECT 1` against Postgres and answers **503** when that fails.
+
+The split matters because the two answers call for different actions. A dead process should
+be restarted. A live process that cannot reach its database should be taken out of rotation
+and left running — restarting it will not bring the database back, and a restart loop hides
+the real fault.
+
+## Rolling back
+
+`.github/workflows/rollback.yaml` takes a commit SHA, points production at the images built
+from that commit, and redeploys both services. It is triggered by hand.
+
+### What the workflow does
+
+The Railway CLI cannot change which image a service points at — only their GraphQL API can.
+So the rollback moves the tag rather than the service.
+
+```
+workflow_dispatch(sha)
+     │
+     ▼
+  retag        do both images exist for that SHA?
+     │         then repoint :main at them, api and client
+     ▼
+  deploys      matrix: api, client
+               railway redeploy → pulls :main
+```
+
+`docker buildx imagetools create` rewrites a manifest inside the registry. Nothing is
+pulled, rebuilt or pushed, so the job finishes in seconds.
+
+The order inside it is the point. Both images are checked before either tag moves, and both
+tags move before either service is redeployed. A mistyped SHA fails while nothing has
+changed yet, and a registry error cannot leave the frontend on one commit and the API on
+another.
+
+The SHA to hand it is the one on `main` after the merge, not the local commit. A squash
+merge creates a new commit, and it is that SHA the build tagged.
+
+### Rollback and deploy share a queue
+
+Both workflows write to the same tag, so both declare the same group:
+
+```yaml
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+```
+
+One group name in two files puts them in a single queue. Without it: a rollback repoints
+`:main` at the old image, a merge lands, `build-docker.yaml` repoints it at the new one, and
+the rollback's redeploy pulls the image it was trying to escape. Both runs finish green and
+production is on the wrong version.
+
+`cancel-in-progress` stays `false`. Cancelling suits work that leaves nothing behind, like a
+stale CI run on a pull request. A cancelled `db-migrate` leaves a database half-migrated.
+
+### All of this is a workaround
+
+Pointing production at a tag that moves is what makes the rest of this section necessary.
+The correct shape is a service pinned to an immutable `:<sha>` tag, changed through
+Railway's GraphQL API on each deploy. Deploying and rolling back would then be one call with
+a different argument, `:main` would not be needed, and the race that `concurrency` guards
+against could not happen.
+
 ## Decisions
 
 ### The apps are separate projects, not a pnpm workspace
@@ -417,6 +496,8 @@ image — which is what makes an investigation or a rollback possible at all.
 `:main` exists for one reason: the Railway CLI cannot change which image a service points
 at, only their GraphQL API can. So the service is pinned to a tag that moves, and `railway
 redeploy` pulls whatever that tag means now.
+
+Rolling back is therefore repointing `:main` at an older SHA — see *Rolling back*.
 
 ### Only the frontend is published
 
