@@ -13,11 +13,14 @@ interface WebServerOptions {
 
 class WebServer {
 	server: FastifyInstance;
+	checkDbConnection: () => Promise<void>;
 
-	constructor() {
+	constructor(checkDB: () => Promise<void>) {
+		this.checkDbConnection = checkDB;
 		this.server = Fastify({ logger: false });
 		this.registerErrorHandler();
 		this.registerRoute(this.createHealthCheckRoute());
+		this.registerRoute(this.createReadyCheckRoute());
 	}
 
 	private registerErrorHandler() {
@@ -41,12 +44,33 @@ class WebServer {
 
 	private createHealthCheckRoute(): FastifyPluginAsync {
 		return async (app) => {
-			app.get("/health", async () => {
+			app.get("/health/live", async () => {
 				return {
 					status: "ok",
 					dateTime: new Date().toISOString(),
 					gitSha: env.gitSha,
 				};
+			});
+		};
+	}
+
+	private createReadyCheckRoute(): FastifyPluginAsync {
+		return async (app) => {
+			app.get("/health/ready", async (_request, reply) => {
+				try {
+					await this.checkDbConnection();
+					return {
+						status: "ok",
+						dateTime: new Date().toISOString(),
+						dbConnection: "true",
+					};
+				} catch (_error) {
+					return reply.code(503).send({
+						status: "error",
+						dateTime: new Date().toISOString(),
+						dbConnection: "false",
+					});
+				}
 			});
 		};
 	}

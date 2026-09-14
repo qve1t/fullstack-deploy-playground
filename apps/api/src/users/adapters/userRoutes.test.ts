@@ -13,7 +13,7 @@ const user: User = {
 	updatedAt: new Date("2026-01-01T12:00:00.000Z"),
 };
 
-function setup(t: TestContext) {
+function setup(t: TestContext, dbHealthy = true) {
 	const create = t.mock.fn<UserRepository["create"]>(async (input) => ({
 		...user,
 		...input,
@@ -27,19 +27,48 @@ function setup(t: TestContext) {
 		update: async (_id, input) => ({ ...user, ...input }),
 		delete: async () => {},
 	};
-	const webServer = new WebServer();
+
+	const databaseConnection = async () => {
+		if (!dbHealthy) {
+			throw new Error("Db unreachable");
+		}
+	};
+
+	const webServer = new WebServer(databaseConnection);
 	t.after(() => webServer.stopServer());
 	webServer.registerRoute(createUserRoutes(new UserService(users)));
 	return { server: webServer.server, create };
 }
 
-test("GET /health returns the application status", async (t) => {
+test("GET /health/live returns the application status", async (t) => {
 	const { server } = setup(t);
 
-	const response = await server.inject({ method: "GET", url: "/health" });
+	const response = await server.inject({ method: "GET", url: "/health/live" });
 
 	assert.equal(response.statusCode, 200);
 	assert.equal(response.json().status, "ok");
+	assert.ok(Number.isFinite(Date.parse(response.json().dateTime)));
+});
+
+test("GET /health/ready returns the negative application ready status", async (t) => {
+	const { server } = setup(t, false);
+
+	const response = await server.inject({ method: "GET", url: "/health/ready" });
+
+	assert.equal(response.statusCode, 503);
+	assert.equal(response.json().status, "error");
+	assert.equal(response.json().dbConnection, "false");
+	assert.ok(Number.isFinite(Date.parse(response.json().dateTime)));
+});
+
+test("GET /health/ready returns the positive application ready status", async (t) => {
+	const { server } = setup(t);
+
+	const response = await server.inject({ method: "GET", url: "/health/ready" });
+
+	assert.equal(response.statusCode, 200);
+	assert.equal(response.json().status, "ok");
+	assert.equal(response.json().dbConnection, "true");
 	assert.ok(Number.isFinite(Date.parse(response.json().dateTime)));
 });
 

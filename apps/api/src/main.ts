@@ -11,6 +11,8 @@ import { UserService } from "./users/application/userService.js";
 async function main() {
 	envCheck();
 
+	let shuttingDown = false;
+
 	const db = new PrismaDb();
 	await db.connect();
 	await db.checkConnection();
@@ -21,22 +23,39 @@ async function main() {
 	const userService = new UserService(userRepository);
 	const noteService = new NoteService(noteRepository, userRepository);
 
-	const webServer = new WebServer();
+	const webServer = new WebServer(() => db.checkConnection());
 	webServer.registerRoute(createUserRoutes(userService));
 	webServer.registerRoute(createNoteRoutes(noteService));
 	await webServer.startServer({ port: env.port, host: env.host });
 
-	process.on("SIGTERM", async () => {
-		await webServer.stopServer();
-		await db.disconnect();
-		process.exit(0);
-	});
+	async function shutdown(signal: NodeJS.Signals): Promise<void> {
+		if (shuttingDown) {
+			return;
+		}
 
-	process.on("SIGINT", async () => {
-		await webServer.stopServer();
-		await db.disconnect();
-		process.exit(0);
-	});
+		shuttingDown = true;
+
+		console.log({ signal }, "Shutting down application");
+
+		const forceExitTimer = setTimeout(() => {
+			console.error("Timed out while shutting down");
+			process.exit(1);
+		}, 5000);
+
+		try {
+			await webServer.stopServer();
+			await db.disconnect();
+		} catch (error) {
+			console.error({ err: error }, "Failed to shut down application");
+			process.exitCode = 1;
+		} finally {
+			clearTimeout(forceExitTimer);
+		}
+	}
+
+	process.once("SIGTERM", shutdown);
+
+	process.once("SIGINT", shutdown);
 }
 
 main().catch((err) => {

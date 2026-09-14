@@ -214,10 +214,10 @@ URL.
 ### Knowing what is running
 
 The build passes the commit SHA in as a build argument. The API keeps it in an environment
-variable and returns it from `/health`:
+variable and returns it from `/health/live`:
 
 ```bash
-curl https://<api-url>/health
+curl https://<api-url>/health/live
 {"status":"ok","dateTime":"2026-09-10T12:00:00.000Z","gitSha":"a1b2c3d…"}
 ```
 
