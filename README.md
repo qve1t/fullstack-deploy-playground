@@ -1,7 +1,7 @@
-# fullstack-deploy-playground — a CI/CD pipeline, with a notes app attached
+# fullstack-deploy-playground - a CI/CD pipeline, with a notes app attached
 
-A learning project. The goal is a complete deployment pipeline — from `git push`
-to production — built and understood end to end.
+A learning project. The goal is a complete deployment pipeline - from `git push`
+to production - built and understood end to end.
 
 **The application itself is deliberately boring.** It is a simple CRUD resource and it is
 not the point. The point is everything around it: containerisation, CI gates, automated
@@ -9,65 +9,41 @@ deploys, database migrations, health checks, rollback and observability.
 
 ## Architecture
 
-The same two images run locally and in production. Only the values they read at startup
-change.
-
-### Locally, with Compose
-
-The whole stack starts with a single `docker compose up`. The browser only talks to
-nginx; everything else stays on the internal Compose network.
+The application has the same core runtime topology and frontend request path locally and in
+production. nginx serves the React SPA and proxies its `/api/` requests to the Fastify API,
+which talks to PostgreSQL. On Railway, both the client and the API have public URLs; the demo
+API is intentionally unauthenticated because authentication is outside this project's scope.
 
 ```
   browser
-     │  :8000
+     │  client URL
      ▼
-┌──────────────┐   /api/   ┌──────────────┐        ┌──────────────┐
-│    client    │──────────▶│     api      │───────▶│   postgres   │
-│  nginx 1.31  │           │ Fastify :3000│        │     :5432    │
-│  SPA + proxy │           │ not published│        └──────▲───────┘
-└──────────────┘           └──────────────┘               │
-                                                   ┌──────┴───────┐
-                                                   │   migrate    │
-                                                   │ one-shot job │
-                                                   └──────────────┘
+┌──────────────┐    /api/    ┌──────────────┐     SQL     ┌──────────────┐
+│    client    │────────────▶│     API      │────────────▶│  PostgreSQL  │
+│ React + nginx│             │ Fastify :3000│             │    :5432     │
+└──────────────┘             └──────────────┘             └──────────────┘
 ```
 
-Startup is ordered by health:
+|                     | Local                                                   | Production                                                     |
+| ------------------- | ------------------------------------------------------- | -------------------------------------------------------------- |
+| Orchestration       | Docker Compose                                          | Railway                                                        |
+| HTTP access         | Client on `localhost:8000`; API internal to Compose     | Public client and API URLs                                     |
+| Migrations          | One-shot `migrate` service before the API starts        | `db-migrate` CI job between the image build and deployment     |
+| Database exposure   | Port published for running the API natively during dev  | Public TCP endpoint used by the GitHub Actions migration job   |
 
-1. `postgres` starts and must report **healthy** (`pg_isready`).
-2. `migrate` runs `prisma migrate deploy` and must **exit 0**.
-3. `api` starts only then (`condition: service_completed_successfully`), verifies its
-   database connection, and refuses to start if that fails.
-4. `client` starts once the API reports healthy.
+Both migration paths must succeed before the application starts or is deployed.
 
-A failed migration therefore stops the stack, instead of leaving a running application
-pointed at an unmigrated database.
+### Frontend routing
 
-### In production, on Railway
+The frontend calls the relative `/api` path. Vite proxies it during native development;
+nginx serves the SPA and proxies it in containers. This keeps one browser origin, avoids
+CORS and allows one client image to be configured at runtime for each environment. Direct
+API clients can use the separate public API URL.
 
-Three services in one Railway project, and the same shape as above. Only the client has a
-public URL. The API is private.
-
-```
-  browser
-     │  :443  public URL
-     ▼
-┌──────────────┐   /api/   ┌──────────────┐        ┌──────────────┐
-│    client    │──────────▶│     api      │───────▶│   postgres   │
-│    nginx     │  private  │ Fastify :3000│private │              │
-│  SPA + proxy │  network  │  no public   │network │  public TCP  │
-└──────────────┘           └──────────────┘        └──────▲───────┘
-                                                          │
-                                                   ┌──────┴───────┐
-                                                   │  db-migrate  │
-                                                   │  from CI     │
-                                                   └──────────────┘
-```
-
-There is no `migrate` service here. The schema is applied by the `db-migrate` job in the
-deployment pipeline, from a GitHub runner, reaching Postgres through its public TCP
-endpoint. Keeping that endpoint open is what this choice costs, and the reasoning for
-taking it anyway is written down under *Decisions*.
+At startup, nginx renders
+[`nginx.conf.template`](apps/client/nginx.conf.template) with the API address and DNS
+resolver. Runtime DNS resolution lets the client recover when Railway changes the API's
+private address after a redeploy.
 
 ## Stack
 
@@ -82,7 +58,12 @@ taking it anyway is written down under *Decisions*.
 | CI              | GitHub Actions, required checks on every pull request      |
 | CD              | GitHub Actions → ghcr.io → Railway, on every merge to main |
 
-## Running the whole thing
+Both Dockerfiles use multi-stage builds, keeping build tools out of the final API and nginx
+images.
+
+## Running locally
+
+For the complete stack, use Compose:
 
 ```bash
 cp .env.example .env          # Postgres credentials, read by Compose
@@ -91,35 +72,48 @@ docker compose up --build
 
 Then open <http://localhost:8000>.
 
-Starting from an empty volume works — the `migrate` job creates the schema before the API
+Starting from an empty volume works - the `migrate` job creates the schema before the API
 comes up.
 
-## Local development
-
-For a fast edit loop, run only the database in Docker and the apps natively:
+For a faster edit loop, run only PostgreSQL in Docker:
 
 ```bash
 docker compose up postgres -d
-
-cd apps/api    && cp .env.example .env && pnpm install && pnpm dev
-cd apps/client && pnpm install && pnpm dev
 ```
 
-Natively the API reaches Postgres at `localhost:5432` through the published port; inside
-Compose it uses the `postgres` service name, which Docker's embedded DNS resolves on the
-project network.
+Then start the applications in separate terminals:
+
+```bash
+# API
+cd apps/api
+cp .env.example .env
+pnpm install
+pnpm dev
+```
+
+```bash
+# Client
+cd apps/client
+pnpm install
+pnpm dev
+```
+
+The native API connects to the published database port at `localhost:5432`; in Compose it
+connects to `postgres:5432` on the project network.
 
 ## Tests
 
-Small tests that run without PostgreSQL, Docker or a running API — six in the API, four
-in the client.
+The test suite is intentionally small. Its main purpose in this project is to provide a
+real CI gate: every pull request runs it, and a failing test blocks the merge. All ten
+tests run without PostgreSQL, Docker or a running API.
 
-The API uses Node's test runner with the existing `tsx` dependency and Fastify's
-`inject` to check both health endpoints, user creation, validation and a missing user.
-The client uses Vitest with a mocked `fetch` to check URL encoding, note creation, API
-errors and empty responses after deletion.
+Six API tests use Node's test runner and Fastify's `inject`; four client tests use Vitest
+with a mocked `fetch`. They cover enough behaviour to prove that the gate can catch a
+regression while staying fast and deterministic.
 
-What this shape of test cannot catch is written up under *Green tests, broken endpoint*.
+These isolated tests do not verify the integration between the client, API and a real
+database. That limitation is acceptable here because the pipeline, rather than test
+coverage, is the focus of the project.
 
 ## Continuous integration
 
@@ -141,28 +135,14 @@ Inside a job the cheap steps run first. Lint and typecheck finish in seconds and
 build takes longest, so a broken type never reaches a build. The first failing step
 ends the job and everything after it is skipped.
 
-`test-api` runs `pnpm db:generate` before the other steps. The Prisma client is
-generated code and is not committed, so a fresh checkout does not have it yet. Every
-developer machine has it lying around from an earlier `pnpm dev`, which is exactly why
-it is easy to forget: the typecheck passes locally and fails in CI.
-
-### Proving the gate works
-
-A gate that has never failed is not a gate — it might be passing because it checks
-nothing. So it was tested from the other side.
-
-A pull request changed the API error handler to answer `200` where it used to answer
-`404`, `409` and `400`. The code still compiled, and lint and typecheck stayed green.
-The tests caught it, the build was skipped, and GitHub blocked the merge.
-
-That order matters more than the fix. A type error would only have proved that the
-compiler runs. Breaking the behaviour proved that the tests are actually load-bearing.
+`test-api` generates the Prisma client before its quality checks because generated code is
+not committed. This makes the job work from a clean checkout.
 
 ## Continuous deployment
 
 A merge into `main` puts the change in production. There is no manual step in between.
 
-`.github/workflows/build-docker.yaml` runs on every push to `main`. In practice that only
+`.github/workflows/build-docker.yaml` runs on every push to `main`. That only
 happens through a pull request, because `main` is protected and the CI checks are required.
 
 ```
@@ -180,40 +160,22 @@ merge to main
                 railway redeploy → pulls :main
 ```
 
-Nothing is rebuilt along the way. The image that gets deployed is the image that was built
-once, from that commit - *build once, promote*.
+The immutable SHA tag identifies the exact artifact for traceability and rollback; the
+moving `:main` tag is the reference Railway redeploys. Nothing is rebuilt along the way.
 
-`deploys` declares `needs: [builds, db-migrate]`. Without that, the jobs would all start at
-the same time, the redeploy would usually win the race, and Railway would pull the
-**previous** image. The pipeline would be green and production would be stale. That is the
-worst kind of failure, because nothing looks broken.
+### Migrations gate the deploy
 
-### The migration runs between the build and the deploy
+`db-migrate` is a single job, never a matrix, so CI starts only one migration runner
+against the production database. It runs the lockfile-pinned `pnpm db:deploy` command
+instead of migrating at application startup, where multiple replicas could run it at once.
 
-`db-migrate` runs `prisma migrate deploy` once. It is a single job and never a matrix: two
-runners applying the same migrations to the same database at the same time is the failure
-this shape avoids.
+Its position provides two guards: a failed build never touches the database, and a failed
+migration prevents the new application version from being deployed. Production continues
+running the previous version.
 
-Its position in the chain is deliberate in both directions.
-
-It runs **after** `builds`, so a failed image build never touches the production database.
-Nothing is migrated for an artifact that does not exist.
-
-It runs **before** `deploys`, which means that for the couple of minutes between the two
-jobs, the old code is talking to the new schema. That window is not an accident. It is the
-reason every migration has to be backward compatible with the version already running — a
-change that only the new code can survive would break the site before the new code ever
-ships. The pipeline makes that rule structural instead of something to remember.
-
-If the migration fails, `deploys` is skipped. The images sit in ghcr.io, production keeps
-serving the old code, and nothing ends up half-deployed.
-
-The Prisma CLI version comes out of the lockfile: the job runs `pnpm install
---frozen-lockfile` and then `pnpm db:deploy`, the same script the Compose `migrate` service
-runs. `npx prisma` would instead have downloaded whatever was newest on npm that morning
-and pointed it at the production database. Prisma scopes its config filename to the major
-version (`prisma7.config.ts`), so a silent jump to 8 would not even find the datasource
-URL.
+Because the schema changes before the application does, the old code briefly runs against
+the new schema. Every migration must therefore be backward compatible with the version
+already in production.
 
 ### Knowing what is running
 
@@ -230,285 +192,67 @@ curl https://<api-url>/health/live
 | Secret          | Used for | Scope                                             |
 | --------------- | -------- | ------------------------------------------------- |
 | `GITHUB_TOKEN`  | ghcr.io  | Created by GitHub, lives for one run              |
-| `RAILWAY_TOKEN` | Railway  | Project token — one project, one environment      |
+| `RAILWAY_TOKEN` | Railway  | Project token - one project, one environment      |
 | `DATABASE_URL`  | Postgres | Connection string for the production database     |
 
-`GITHUB_TOKEN` is not stored anywhere. GitHub creates it for each run, and the workflow asks
-for the one permission it actually needs:
+GitHub creates `GITHUB_TOKEN` for each run and grants it only repository read and package
+write access. `RAILWAY_TOKEN` is scoped to one project, while `DATABASE_URL` is exposed only
+to the migration step through its environment.
 
-```yaml
-permissions:
-  contents: read
-  packages: write
-```
+## Backward-compatible migrations
 
-`RAILWAY_TOKEN` is a real stored secret, because Railway knows nothing about this
-repository. It is a project token and not an account token, so if it leaked it would reach
-one environment instead of everything on the account.
+Because migrations run before new images are deployed, schema changes follow the
+expand-and-contract pattern:
 
-`DATABASE_URL` is the one worth worrying about. The other two are scoped API tokens; this
-one is direct write access to production data. It reaches the job through the step's `env:`
-block rather than being written inline into the `run:` line, because `${{ }}` is substituted
-into the script text before any shell sees it — an inline secret becomes part of the command
-line itself.
+1. **Expand:** add the new nullable structure while the old code remains valid.
+2. **Transition:** dual-write, backfill existing rows and switch reads to the new structure.
+3. **Contract:** tighten constraints and remove the old structure only after no deployed
+   version depends on it.
 
-## Renaming a column without downtime
+The rename from `Note.title` to `Note.heading` exercised the full sequence. Its database
+steps remain visible in the [Prisma migration history](apps/api/prisma/migrations).
 
-`Note.title` became `Note.heading` while the site stayed up. It took six deploys.
+## Health checks and shutdown
 
-The reason it takes six is the pipeline. The migration job runs *before* the new image is
-live, so for a minute or two the **old** code is running against the **new** schema. Every
-step has to be survivable by the version already in production.
+| Endpoint        | Returns 200 when                          |
+| --------------- | ----------------------------------------- |
+| `/health/live`  | The API process is running                |
+| `/health/ready` | A `SELECT 1` query against Postgres works |
 
-| # | Kind      | What it did                                           |
-| - | --------- | ----------------------------------------------------- |
-| 1 | migration | `ADD COLUMN heading TEXT`, nullable                   |
-| 2 | code      | write both columns, read `heading ?? title`           |
-| 3 | migration | backfill: `SET heading = title WHERE heading IS NULL` |
-| 4 | migration | `title DROP NOT NULL`, `heading SET NOT NULL`         |
-| 5 | code      | write and read `heading` only                         |
-| 6 | migration | `DROP COLUMN title`                                   |
+Compose uses `/health/live` to check the API. `/health/ready` answers **503** when the
+database is unavailable and is ready to be wired into a routing or deployment check.
 
-The rule underneath it: **never remove or tighten something in the same step that changes
-the code.** Adding a column or loosening a constraint can ride along with a code change.
-Removing one cannot.
+On `SIGTERM`, the API closes Fastify, disconnects from Postgres and allows five seconds for
+a graceful shutdown before forcing the process to exit.
 
-### Three steps would have been enough
+## Observability
 
-Six is not the minimum. The same rename fits into three pull requests:
-
-| PR | Contains         | What it does                                             |
-| -- | ---------------- | -------------------------------------------------------- |
-| A  | migration + code | add `heading` nullable, then write both columns           |
-| B  | migration + code | backfill, flip both constraints, then use `heading` only  |
-| C  | migration        | drop `title`                                              |
-
-B works because the migration runs first and the old image is still writing both columns:
-it satisfies the new `heading NOT NULL`, and `title` has just become nullable, so nothing
-it does breaks.
-
-C cannot join B — the drop would land while the old image still writes to that column, and
-that pull request carries no new code to fix it. A cannot join B either, because
-`SET NOT NULL` would run while the version that knows nothing about `heading` is still
-live, and its next insert would fail. Three is a floor, not a preference.
-
-It was done in six because this is a learning project, and each extra step made one thing
-visible: that old code survives a new nullable column, that the read fallback really does
-handle rows that are still empty, that a `NOT NULL` column cannot simply be abandoned.
-Merged together, none of that is observable. On a real project each step costs a review and
-a deploy window, and three would be the right call.
-
-### What was skipped
-
-Step 6 destroys data and no backup was taken first. On a table with real data that is the
-wrong call. The right one is an automated dump on every migration, unconditionally —
-deciding *which* migrations are destructive is the part that goes wrong, not the dump.
-
-## Health checks
-
-Two endpoints, answering two different questions.
-
-| Endpoint        | Question               | Who asks                                 |
-| --------------- | ---------------------- | ---------------------------------------- |
-| `/health/live`  | Is the process alive?  | Compose, the platform's restart logic    |
-| `/health/ready` | Can it serve traffic?  | anything deciding where to route         |
-
-`/health/live` answers immediately and touches nothing else. `/health/ready` runs
-`SELECT 1` against Postgres and answers **503** when that fails.
-
-The split matters because the two answers call for different actions. A dead process should
-be restarted. A live process that cannot reach its database should be taken out of rotation
-and left running — restarting it will not bring the database back, and a restart loop hides
-the real fault.
+The API uses Pino for structured application and request logs. Production emits JSON with
+the deployed commit SHA in every record, while local development enables `pino-pretty`.
+Railway collects the production logs and provides service-level infrastructure metrics.
 
 ## Rolling back
 
-`.github/workflows/rollback.yaml` takes a commit SHA, points production at the images built
-from that commit, and redeploys both services. It is triggered by hand.
-
-### What the workflow does
-
-The Railway CLI cannot change which image a service points at — only their GraphQL API can.
-So the rollback moves the tag rather than the service.
+The manually triggered `.github/workflows/rollback.yaml` takes a commit SHA and reuses the
+API and client images already stored in ghcr.io:
 
 ```
 workflow_dispatch(sha)
      │
      ▼
-  retag        do both images exist for that SHA?
-     │         then repoint :main at them, api and client
+  verify       both :<sha> images exist
+     │
      ▼
-  deploys      matrix: api, client
-               railway redeploy → pulls :main
+  retag        point both :main tags at them
+     │
+     ▼
+  deploy       redeploy both Railway services
 ```
 
-`docker buildx imagetools create` rewrites a manifest inside the registry. Nothing is
-pulled, rebuilt or pushed, so the job finishes in seconds.
+Retagging changes registry manifests without rebuilding the images. This follows Railway's
+[mutable-tag deployment pattern](https://docs.railway.com/guides/private-container-registry):
+both workflows share the `deploy-main` concurrency group so they cannot move `:main` at the
+same time.
 
-The order inside it is the point. Both images are checked before either tag moves, and both
-tags move before either service is redeployed. A mistyped SHA fails while nothing has
-changed yet, and a registry error cannot leave the frontend on one commit and the API on
-another.
-
-The SHA to hand it is the one on `main` after the merge, not the local commit. A squash
-merge creates a new commit, and it is that SHA the build tagged.
-
-### Rollback and deploy share a queue
-
-Both workflows write to the same tag, so both declare the same group:
-
-```yaml
-concurrency:
-  group: deploy-main
-  cancel-in-progress: false
-```
-
-One group name in two files puts them in a single queue. Without it: a rollback repoints
-`:main` at the old image, a merge lands, `build-docker.yaml` repoints it at the new one, and
-the rollback's redeploy pulls the image it was trying to escape. Both runs finish green and
-production is on the wrong version.
-
-`cancel-in-progress` stays `false`. Cancelling suits work that leaves nothing behind, like a
-stale CI run on a pull request. A cancelled `db-migrate` leaves a database half-migrated.
-
-### All of this is a workaround
-
-Pointing production at a tag that moves is what makes the rest of this section necessary.
-The correct shape is a service pinned to an immutable `:<sha>` tag, changed through
-Railway's GraphQL API on each deploy. Deploying and rolling back would then be one call with
-a different argument, `:main` would not be needed, and the race that `concurrency` guards
-against could not happen.
-
-## Decisions
-
-### The apps are separate projects, not a pnpm workspace
-
-`apps/api` and `apps/client` each have their own lockfile, Biome config and `node_modules`.
-
-A workspace would give CI one `pnpm install` instead of two. But building a container for
-a single app would then need `pnpm deploy --filter` to pull that app out of a shared
-lockfile. The two apps share no code, so that trade is not worth making yet.
-
-### The Node version is written down in one place
-
-The exact version lives in `.nvmrc` at the repo root. It sits at the root because it
-describes the development environment, not one app.
-
-Three tools need that version and none of them share config: nvm, GitHub Actions and
-Docker. The rule is **derive it where a tool can read the file, verify it where a tool
-cannot.** `actions/setup-node` reads `.nvmrc` directly. A Dockerfile cannot read a file
-before `FROM`, so it has to repeat the version — and the `check-node-version` job fails
-the build if the copy ever drifts from the original.
-
-### Migrations run as their own job, never at app startup
-
-Locally the `migrate` Compose service runs once and must finish before the API starts. In
-production the `db-migrate` job does the same thing, one step earlier in the pipeline.
-
-Running migrations on boot would cause two problems. With several replicas, they would all
-migrate at the same time. And a failed migration would restart the app forever instead of
-stopping the deploy.
-
-Both paths run the same `pnpm db:deploy` script on the same pinned Prisma version, so what
-gets exercised on a laptop is what runs against production.
-
-### The pipeline migrates from CI, not from inside the project
-
-The alternative was Railway's per-service pre-deploy command: the same image, run inside the
-project, on the private network, before the new version starts. That route would have let
-Postgres drop its public TCP endpoint entirely.
-
-The CI job won for one reason — it is in the repository. The ordering, the failure
-behaviour and the pinned CLI version are all readable in
-`.github/workflows/build-docker.yaml`. A pre-deploy command is a text field in a dashboard,
-invisible to anyone who clones this repo and invisible in its history.
-
-The cost is real and is not hidden: Postgres keeps a public TCP endpoint so that a GitHub
-runner can reach it, and a production connection string lives in a GitHub secret. For a
-project this size that is an acceptable trade. For a database with real data in it, the
-pre-deploy route is the better answer.
-
-### The browser only talks to nginx
-
-The frontend calls `/api`, a relative path. nginx forwards it to the API over the internal
-network.
-
-This keeps one image for every environment. Vite writes environment variables into the
-bundle at build time, so an absolute API URL would need a separate image per environment,
-which breaks *build once, promote*.
-
-It also means the page and the API share an origin, so there is no CORS setup at all.
-
-Both environments put a proxy in front of the API, and both strip the prefix the same way:
-
-| Environment | Proxy           | Mapping                 |
-| ----------- | --------------- | ----------------------- |
-| dev         | Vite dev server | `/api/notes` → `/notes` |
-| production  | nginx           | `/api/notes` → `/notes` |
-
-### The container builds its own config when it starts
-
-nginx cannot read environment variables. Its config is a static file.
-
-But one value has to differ per environment: where the API is. Under Compose it is
-`http://api:3000`, on Railway it is e.g. `http://api.railway.internal:3000`.
-
-The official nginx image already solves this. At container start, before nginx runs,
-anything in `/etc/nginx/templates/*.template` is passed through `envsubst` and written into
-`/etc/nginx/conf.d/`. So the repo holds `nginx.conf.template` with `${API_UPSTREAM}` and
-`${DNS_RESOLVER}` in it, and the real config is produced when the container boots.
-
-### nginx looks the API up on every request
-
-The upstream address goes into a variable first:
-
-```nginx
-resolver ${DNS_RESOLVER} ipv6=on valid=10s;
-
-location /api/ {
-    set $upstream ${API_UPSTREAM};
-    rewrite ^/api/(.*)$ /$1 break;
-    proxy_pass $upstream;
-}
-```
-
-This looks like a detour and it is not. When `proxy_pass` holds a literal hostname, nginx
-resolves it **once, at startup**, and caches that address for the life of the process. On
-Railway the private address of a service changes every time it is redeployed. So every
-deploy of the API would break the frontend until nginx was restarted — with both health
-checks still green, which makes it very hard to find.
-
-A variable in `proxy_pass` changes the behaviour: nginx resolves the name per request, using
-the `resolver` directive and its short `valid=` window. The frontend recovers by itself
-within ten seconds of an API deploy.
-
-The `rewrite` line is what that costs. The trailing slash in `proxy_pass http://api:3000/`
-used to strip the `/api` prefix on its own, and that stops happening once a variable is
-involved, so the prefix is now stripped explicitly.
-
-### Every image gets two tags
-
-Each build pushes `:<commit sha>` and `:main`.
-
-The SHA tag is the real one. It never changes, and it says exactly which commit produced the
-image — which is what makes an investigation or a rollback possible at all.
-
-`:main` exists for one reason: the Railway CLI cannot change which image a service points
-at, only their GraphQL API can. So the service is pinned to a tag that moves, and `railway
-redeploy` pulls whatever that tag means now.
-
-Rolling back is therefore repointing `:main` at an older SHA — see *Rolling back*.
-
-### Only the frontend is published
-
-The API listens on port 3000 inside the Compose network and has no host port. Postgres has
-one, but only so that local development can reach it.
-
-Production is almost the same. Only the client service has a generated domain, and the API
-is reachable on the private network only, so the one way in from the internet is through
-nginx.
-
-Postgres is the exception. Railway also gives it a public TCP endpoint, and the
-`db-migrate` job reaches the database through it. That endpoint stays open on purpose — see
-*The pipeline migrates from CI* above — and it is the one way into an otherwise private
-network that does not go through nginx.
+Rollback changes only the application images; it does not reverse database migrations.
+The earlier version therefore still depends on backward-compatible schema changes.
