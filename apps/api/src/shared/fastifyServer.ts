@@ -2,6 +2,7 @@ import Fastify, {
 	type FastifyError,
 	type FastifyInstance,
 	type FastifyPluginAsync,
+	type FastifyServerOptions,
 } from "fastify";
 import { ConflictError, NotFoundError } from "./applicationErrors.js";
 import { env } from "./env.js";
@@ -15,16 +16,21 @@ class WebServer {
 	server: FastifyInstance;
 	checkDbConnection: () => Promise<void>;
 
-	constructor(checkDB: () => Promise<void>) {
+	constructor(
+		checkDB: () => Promise<void>,
+		logger?: FastifyServerOptions["loggerInstance"],
+	) {
 		this.checkDbConnection = checkDB;
-		this.server = Fastify({ logger: false });
+		this.server = Fastify(
+			logger ? { loggerInstance: logger } : { logger: false },
+		);
 		this.registerErrorHandler();
 		this.registerRoute(this.createHealthCheckRoute());
 		this.registerRoute(this.createReadyCheckRoute());
 	}
 
 	private registerErrorHandler() {
-		this.server.setErrorHandler((error: FastifyError, _request, reply) => {
+		this.server.setErrorHandler((error: FastifyError, request, reply) => {
 			if (error instanceof NotFoundError) {
 				return reply.code(404).send({ message: error.message });
 			}
@@ -37,14 +43,14 @@ class WebServer {
 				return reply.code(400).send({ message: error.message });
 			}
 
-			console.error(error);
+			request.log.error({ err: error }, "Unhandled error");
 			return reply.code(500).send({ message: "Internal server error" });
 		});
 	}
 
 	private createHealthCheckRoute(): FastifyPluginAsync {
 		return async (app) => {
-			app.get("/health/live", async () => {
+			app.get("/health/live", { logLevel: "warn" }, async () => {
 				return {
 					status: "ok",
 					dateTime: new Date().toISOString(),
@@ -56,7 +62,7 @@ class WebServer {
 
 	private createReadyCheckRoute(): FastifyPluginAsync {
 		return async (app) => {
-			app.get("/health/ready", async (_request, reply) => {
+			app.get("/health/ready", { logLevel: "warn" }, async (request, reply) => {
 				try {
 					await this.checkDbConnection();
 					return {
@@ -64,7 +70,8 @@ class WebServer {
 						dateTime: new Date().toISOString(),
 						dbConnection: "true",
 					};
-				} catch (_error) {
+				} catch (error) {
+					request.log.warn({ err: error }, "Readiness check failed");
 					return reply.code(503).send({
 						status: "error",
 						dateTime: new Date().toISOString(),
@@ -81,7 +88,10 @@ class WebServer {
 
 	async startServer(options: WebServerOptions) {
 		await this.server.listen({ port: options.port, host: options.host });
-		console.log(`Server is listening on ${options.host}:${options.port}`);
+		this.server.log.info(
+			{ host: options.host, port: options.port },
+			"Server is listening",
+		);
 	}
 
 	async stopServer() {

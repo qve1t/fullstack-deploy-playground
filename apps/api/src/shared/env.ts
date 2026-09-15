@@ -9,4 +9,6 @@ export const env = {
 	host: process.env.HOST ?? "127.0.0.1",
 	databaseUrl: process.env.DATABASE_URL,
 	gitSha: process.env.GIT_SHA,
+	logLevel: process.env.LOG_LEVEL ?? "info",
+	logPretty: process.env.LOG_PRETTY === "true",
 };

@@ -3,10 +3,13 @@ import { PrismaNoteRepository } from "./notes/adapters/prismaNoteRepository.js";
 import { NoteService } from "./notes/application/noteService.js";
 import { env, envCheck } from "./shared/env.js";
 import { WebServer } from "./shared/fastifyServer.js";
+import { createLogger } from "./shared/logger.js";
 import { PrismaDb } from "./shared/prismaDb.js";
 import { PrismaUserRepository } from "./users/adapters/prismaUserRepository.js";
 import { createUserRoutes } from "./users/adapters/userRoutes.js";
 import { UserService } from "./users/application/userService.js";
+
+const logger = createLogger();
 
 async function main() {
 	envCheck();
@@ -16,14 +19,14 @@ async function main() {
 	const db = new PrismaDb();
 	await db.connect();
 	await db.checkConnection();
-	console.log("Database connected successfully");
+	logger.info("Database connected successfully");
 
 	const userRepository = new PrismaUserRepository(db.getClient());
 	const noteRepository = new PrismaNoteRepository(db.getClient());
 	const userService = new UserService(userRepository);
 	const noteService = new NoteService(noteRepository, userRepository);
 
-	const webServer = new WebServer(() => db.checkConnection());
+	const webServer = new WebServer(() => db.checkConnection(), logger);
 	webServer.registerRoute(createUserRoutes(userService));
 	webServer.registerRoute(createNoteRoutes(noteService));
 	await webServer.startServer({ port: env.port, host: env.host });
@@ -35,10 +38,10 @@ async function main() {
 
 		shuttingDown = true;
 
-		console.log({ signal }, "Shutting down application");
+		logger.info({ signal }, "Shutting down application");
 
 		const forceExitTimer = setTimeout(() => {
-			console.error("Timed out while shutting down");
+			logger.error("Timed out while shutting down");
 			process.exit(1);
 		}, 5000);
 
@@ -46,7 +49,7 @@ async function main() {
 			await webServer.stopServer();
 			await db.disconnect();
 		} catch (error) {
-			console.error({ err: error }, "Failed to shut down application");
+			logger.error({ err: error }, "Failed to shut down application");
 			process.exitCode = 1;
 		} finally {
 			clearTimeout(forceExitTimer);
@@ -59,6 +62,6 @@ async function main() {
 }
 
 main().catch((err) => {
-	console.error(err);
+	logger.fatal({ err }, "Application failed to start");
 	process.exit(1);
 });
