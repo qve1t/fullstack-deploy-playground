@@ -16,22 +16,25 @@ jobs:
       contents: read
       packages: write
     strategy:
-        matrix:
-          app: [api, client]
-        fail-fast: false
+      matrix:
+        app: [api, client]
+      fail-fast: false
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out the repository
+        uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v4
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
 
-      - uses: docker/login-action@v4
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@v7
-
+      - name: Build and push ${{ matrix.app }}
+        uses: docker/build-push-action@v7
         with:
           context: ./apps/${{ matrix.app }}
           target: prod
@@ -50,16 +53,24 @@ jobs:
       run:
         working-directory: apps/api
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node from .nvmrc
+        uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
 
-      - run: npm i -g pnpm@11.13.0
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm db:deploy
+      - name: Install pnpm
+        run: npm i -g pnpm@11.13.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply migrations to production
+        run: pnpm db:deploy
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL}}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
   deploys:
     needs: [builds, db-migrate]
@@ -67,7 +78,23 @@ jobs:
     strategy:
       matrix:
         app: [api, client]
+      fail-fast: false
     steps:
-      - run: npx -y @railway/cli@5.52.1 redeploy --service ${{ matrix.app }} --yes
+      - name: Redeploy ${{ matrix.app }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          SERVICE: ${{ matrix.app }}
+        run: |
+          for attempt in 1 2 3; do
+            if npx -y @railway/cli@5.52.1 redeploy --service "$SERVICE" --yes; then
+              exit 0
+            fi
+
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::redeploy of $SERVICE failed (attempt $attempt/3), retrying"
+              sleep $((attempt * 15))
+            fi
+          done
+
+          echo "::error::redeploy of $SERVICE failed after 3 attempts"
+          exit 1
